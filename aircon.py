@@ -4,20 +4,25 @@ import time
 import requests
 import json
 import ipget
+import concurrent.futures
 
 SERVER = ""
-URL = SERVER + ""
+URL = SERVER + "/api/ducrbcontrol/airconditioner/"
 DEV_UCODE = ""
 HEADERS = {'Content-type': 'application/json'}
 INTERVAL = 0.001
 ANODE_COMMON = False 
-AIRCON_ID = 
+AIRCON_ID = 0
 POWER_MODE = 0
 TEMP = 0
 FAN_SPEED = 0
 MIN_TEMP = 20
 MAX_TEMP = 35
 DISPLAY_STRING = ""
+AIRCON_SELECT = 0
+ROOM = ""
+AIRCON_ID_1 = 0
+AIRCON_ID_2 = 0
 
 GPIO.setmode(GPIO.BCM)
 
@@ -77,11 +82,15 @@ RIGHT_UPPER = GpioOutputPin(14)
 RIGHT_LOWER = GpioOutputPin(23)
 DOT = GpioOutputPin(25)
 
+AIRCON_SELECT_LED1 = GpioOutputPin(6)
+AIRCON_SELECT_LED2 = GpioOutputPin(13)
+
 # GPIO ports for Button pins
 POWER_BUTTON = GpioInputPin(21)
 TEMP_UP_BUTTON = GpioInputPin(20)
 TEMP_DOWN_BUTTON = GpioInputPin(19)
 FAN_SPEED_BUTTON = GpioInputPin(26)
+AIRCON_SELECT_BUTTON = GpioInputPin(16)
 
 # GPIO ports for digit pins
 DIGITS = (
@@ -149,15 +158,22 @@ def httpGet():
         return req.status_code
 
     # Setting LCDBorad DISPLAY_STRING
-    global DISPLAY_STRING
     global POWER_MODE
     global TEMP
     global FAN_SPEED
     data = req.json()
-    POWER_MODE = int(data["on_off"])
-    TEMP = int(str(data["set_temp"])[:2])
-    FAN_SPEED = data["fan_speed"]
-    DISPLAY_STRING = str(TEMP) + "P" + str(FAN_SPEED)
+
+    if type(data) == dict:
+        POWER_MODE = int(data["on_off"])
+        TEMP = int(str(data["set_temp"])[:2])
+        if data["fan_speed"] != -1:
+            FAN_SPEED = data["fan_speed"]
+    elif type(data) == list:
+        POWER_MODE = int(data[0]["on_off"])
+        TEMP = int(str(data[0]["set_temp"])[:2])
+        if data[0]["fan_speed"] != -1:
+            FAN_SPEED = data[0]["fan_speed"]
+    displayString()
     return req.status_code
 
 def getTime():
@@ -184,8 +200,8 @@ def powerButton(self):
     global POWER_MODE
     if (POWER_MODE == 0):
         if str(changePowerMode(1)) == "204":
+            httpGet()
             POWER_MODE = 1
-            displayString()
             #print("CHANGE POWER ON")
     else:
         if str(changePowerMode(0)) == "204":
@@ -239,10 +255,36 @@ def changeFanSpeedButton(self):
         displayString()
         #print("CHANGE FAN SPEED: " + str(FAN_SPEED))
 
+def changeAirconSelectButton(self):
+    global AIRCON_SELECT
+    global AIRCON_ID
+    if AIRCON_SELECT < 2:
+        AIRCON_SELECT += 1
+    else:
+        AIRCON_SELECT = 0
+    airconSelect()
+
+def airconSelect():
+    global AIRCON_ID
+    if AIRCON_SELECT == 0:
+        AIRCON_ID = ROOM
+        AIRCON_SELECT_LED1.on()
+        AIRCON_SELECT_LED2.on()
+    elif AIRCON_SELECT == 1:
+        AIRCON_ID = AIRCON_ID_1
+        AIRCON_SELECT_LED1.on()
+        AIRCON_SELECT_LED2.off()
+    else:
+        AIRCON_ID = AIRCON_ID_2
+        AIRCON_SELECT_LED1.off()
+        AIRCON_SELECT_LED2.on()
+    httpGet()
+
 def display():
+    global DISPLAY_STRING
     while True:
         if POWER_MODE == 0:
-            continue
+            DISPLAY_STRING = "    "
 
         for digit, number in zip(DIGITS, DISPLAY_STRING):
             NUMBERS[number].display()
@@ -250,17 +292,25 @@ def display():
             time.sleep(INTERVAL)
             digit.on()
 
-def loop():
+def httpGetSleep():
+    while True:
+        httpGet()
+        time.sleep(120)
+
+def event():
     GPIO.add_event_detect(POWER_BUTTON.pin, GPIO.FALLING, callback=powerButton, bouncetime=2000)
     GPIO.add_event_detect(TEMP_UP_BUTTON.pin, GPIO.FALLING, callback=changeTempUpButton, bouncetime=500)
     GPIO.add_event_detect(TEMP_DOWN_BUTTON.pin, GPIO.FALLING, callback=changeTempDownButton, bouncetime=500)
     GPIO.add_event_detect(FAN_SPEED_BUTTON.pin, GPIO.FALLING, callback=changeFanSpeedButton, bouncetime=500)
+    GPIO.add_event_detect(AIRCON_SELECT_BUTTON.pin, GPIO.FALLING, callback=changeAirconSelectButton, bouncetime=1000)
 
 def main():
     try:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         postRaspberrypiIpaddress()
-        loop()
-        httpGet()
+        event()
+        airconSelect()
+        executor.submit(httpGetSleep)
         display()
     finally:
         GPIO.cleanup()
