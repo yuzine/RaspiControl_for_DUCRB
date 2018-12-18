@@ -1,0 +1,6 @@
+Adafruit-BMP==1.5.2
+Adafruit-GPIO==1.0.3
+requests==2.18.4
+RPi.GPIO==0.6.3
+ipget==0.0.3
+
